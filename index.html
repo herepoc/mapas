@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Address Geocoding with Vue and Leaflet</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/vue@3.2.31/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+        }
+        #app {
+            height: 100%;
+            width: 100%;
+            position: relative;
+        }
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        .map-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.3s ease;
+        }
+        .input-container {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1001;
+            width: 80%;
+            max-width: 600px;
+            transition: all 0.5s ease;
+        }
+        .input-container.centered {
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .input-container.top {
+            top: 20px;
+        }
+        input {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .suggestions {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 5px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .suggestions li {
+            padding: 12px 15px;
+            cursor: pointer;
+        }
+        .suggestions li:hover {
+            background-color: #f0f0f0;
+        }
+        .center-marker {
+            width: 20px !important;
+            height: 20px !important;
+            border-radius: 50%;
+            background-color: red;
+            border: 2px solid white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="map"></div>
+        <div class="map-overlay" :style="{ opacity: addressSelected ? 0 : 1 }" v-if="!addressSelected"></div>
+        <div :class="['input-container', addressSelected ? 'top' : 'centered']">
+            <input v-model="address" @input="getSuggestions" placeholder="Enter an address" @focus="showOverlay = true" @blur="showOverlay = false">
+            <ul class="suggestions" v-if="suggestions.length && !addressSelected">
+                <li v-for="suggestion in suggestions" @click="selectSuggestion(suggestion)">
+                    {{ suggestion.label }}
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const address = ref('');
+                const suggestions = ref([]);
+                const addressSelected = ref(false);
+                const showOverlay = ref(true);
+                let map, centerMarker;
+                const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Mjk2NDU5MzksImlhdCI6MTcyOTYwMjczOSwiZGF0YSI6eyJpZHVzZXIiOiIzODciLCJjbGllbnRJZCI6IjQxZjk2YzYyLTBiOGQtNDNkMy04NjU2LTY4Nzk1N2QwNjNjZiIsImVtYWlsIjoicG9ydGxldGR0dnRlc3RhcmdlbnRpbmFAZGlyZWN0di5jb20iLCJ1c2VyTmFtZSI6InBvcnRsZXRkdHZ0ZXN0YXJnZW50aW5hIiwiZmlyc3ROYW1lIjoiUG9ydGxldGR0diIsImxhc3ROYW1lIjoidGVzdGFyZ2VudGluYSIsImZ1bGxOYW1lIjoiUG9ydGxldGR0diB0ZXN0YXJnZW50aW5hIiwiY291bnRyeSI6IkFSIiwibGFuZyI6IkVTIiwiYXZhdGFyIjoiIiwiZnVuY3Rpb25zIjpbIkFERFJFU1NfQVJfTk9STUFMSVpFIiwiQURNSU5JU1RSQVRPUiIsIkFQSV9HRU9DT0RFIiwiQkFUQ0hfU1RPUF9KT0IiLCJCRUFOX1BQX1JCUCIsIkNBX0FERFJFU1NfUE9JTlRfQVIiLCJDQV9DRUxfQ09NUExFVEVfQVIiLCJDQV9DRU5UUk9JREVfRFRWIiwiQ0FfQ1BBX0FERFJFU1MiLCJDQV9ESUZFUkVOQ0VMRVZFTE5BTUUiLCJDQV9FTlRSRUNBTExFX0FERFJFU1MiLCJDQV9HRU9fVFlQRSIsIkNBX05JU0UiLCJDQV9QRVJTT05TRUFSQ0hfTE9DQVRJT04iLCJDQV9QSE9ORV9DT01QTEVURV9BUiIsIkNBX1BIT05FX05PX0xMQU1FX0FSIiwiQ0FfUEhPTkVfVkFMSURBVEVfQVIiLCJDQV9QVl9QSE9ORV9BUiIsIkNBVEFMT0dfTEVWRUw0IiwiQ0FUQUxPR19MRVZFTDUiLCJDQVRBTE9HX1NUUkVFVCIsIkNBX1RSSUJVVEFSWV9NQVJLIiwiQ0FfWlBfQVIiLCJDT05UQUNUUEVSU09OX05PUk1BTElaRSIsIkRPTUFJTl9OT1JNQUxJWkVSIiwiRU1BSUxfTk9STUFMSVpFUiIsIkVOUklDSE1FTlRfQVJfMTQiLCJFTlJJQ0hNRU5UX0FSXzE3IiwiRU5SSUNITUVOVF9BUl8yIiwiRU5SSUNITUVOVF9BUl8yMSIsIkVOUklDSE1FTlRfQVJfMzMiLCJFTlJJQ0hNRU5UX0FSXzY2IiwiRU5SSUNITUVOVF9BUl85IiwiRU5SSUNITUVOVF9OT1JNQUxJWkUiLCJHRVRDUEZST01DUEFfTk9STUFMSVpFIiwiR0VUTEVWRUw0RlJPTUNQX05PUk1BTElaRSIsIkdFVFBDRlJPTUxFVkVMNF9OT1JNQUxJWkUiLCJJREVOVElUWVZBTElEQVRJT05fTk9STUFMSVpFIiwiTUFQU19MSVRFX0FSIiwiTkFNRUNPTVBBUkFUT1JfQVJfTk9STUFMSVpFIiwiTkFNRV9OT1JNQUxJWkVSIiwiUEVSU09OU0VBUkNIX05PUk1BTElaRSIsIlBIT05FX05PUk1BTElaRSIsIlBPUF9BRE1JTl9DT0JFUlRVUkFfSVBMQU5fQVIgIiwiUE9QX0NPQkVSVFVSQV9JUExBTl9BUiIsIlBPUF9ET1VCVFNfU1VHR0VTVElPTiIsIlBPUF9EVFZfQ0VOVFJPSURFX0NWIiwiUE9QX0RUVl9SRVBMQUNFUl9OMiIsIlBPUF9EVFZfUkVQTEFDRVJfTjMiLCJQT1BfRFRWX1JFUExBQ0VSX040IiwiUE9QX0RUVl9SRVBMQUNFUl9ONSIsIlBPUF9EVFZfUkVQTEFDRVJfUkJDIiwiUE9QX0VOQUJMRV9HT09HTEVfUFJFRElDVElWRV9BUiIsIlBPUF9HRU5FUklDX0dSQU5UX0FSIiwiUE9QX040Q0VOVFJPSURFIiwiUE9QX1JCUCIsIlBPUF9SQlBfRFRWIiwiUE9QX1JCUE9QIiwiUE9QX1JCWiIsIlBPUF9SQlpfRFRWIiwiUE9QX1JFUExBQ0VSX0NBTExFUyIsIlBPUF9SRVBMQUNFUl9FTlRSRUNBTExFUyIsIlBPUF9SRVBMQUNFUl9PQlMiLCJQT1BfUlVUQVNfQVIiLCJQT1JUTEVUX0RUVl8wMl9BUiIsIlBPUlRMRVRfRFRWX0FSIiwiUFJFRElDVElWRVNFQVJDSF9BUiIsIlBSUF9DUEFfVE9fQ1AiLCJQUlBfUkVQTEFDRVJfQ0FMTEVTIiwiUFJQX1JFUExBQ0VSX040IiwiUFJQX1JVVEFTX0FSIiwiUVVFUllfU1RSRUVUX0FSIiwiUkVWRVJTRV9BUl9OT1JNQUxJWkUiLCJUQVhDT05ESVRJT05fTk9STUFMSVpFIl19fQ.bLPV_psTtxrYJWPONgFWZYnatNnCtUK2EVQz-xCe1PU';
+
+                const getSuggestions = async () => {
+                    if (address.value.length < 3) return;
+                    addressSelected.value = false;
+                    try {
+                        const response = await fetch(`https://wsqa.merlindataquality.com/3.0/predictivesearch/search?level1=AR&stringSearch=${encodeURIComponent(address.value)}`, {
+                            headers: { 'Authorization': `${jwt}` }
+                        });
+                        const data = await response.json();
+                        suggestions.value = data.mSuggest || [];
+                    } catch (error) {
+                        console.error('Erro ao buscar sugestões:', error);
+                    }
+                };
+
+                const selectSuggestion = (suggestion) => {
+                    address.value = suggestion.label;
+                    suggestions.value = [];
+                    addressSelected.value = true;
+                    showOverlay.value = false;
+                    updateMap(suggestion.latitude, suggestion.longitude);
+                };
+
+                const updateMap = (lat, lng) => {
+                    map.setView([lat, lng], 15);
+                    updateCenterMarker();
+                };
+
+                const updateCenterMarker = () => {
+                    const center = map.getCenter();
+                    updateAddressFromCoordinates(center.lat, center.lng);
+                };
+
+                const updateAddressFromCoordinates = async (lat, lng) => {
+                    try {
+                        const addressInfo = await getAddressInfo(lat, lng);
+                        address.value = addressInfo;
+                    } catch (error) {
+                        console.error('Erro ao atualizar endereço:', error);
+                    }
+                };
+
+                const getAddressInfo = async (lat, lng) => {
+                    const response = await fetch(`https://wsqa.merlindataquality.com/georeverse/normalize?level1=AR&latitude=${lat}&longitude=${lng}`, {
+                        headers: { 'Authorization': `${jwt}` }
+                    });
+                    const data = await response.json();
+                    if (data.status === 'CO') {
+                        const { street, approximateStreetNumber, level4, level3, level2 } = data.nGeoReverse;
+                        return `${street} ${approximateStreetNumber}, ${level4}, ${level3}, ${level2}`;
+                    }
+                    throw new Error('Não foi possível obter informações do endereço');
+                };
+
+                onMounted(() => {
+                    if ('geolocation' in navigator) {
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {
+                                initMap(position.coords.latitude, position.coords.longitude);
+                            },
+                            () => {
+                                initMap(-34.6037, -58.3816); // Buenos Aires como padrão
+                            }
+                        );
+                    } else {
+                        initMap(-34.6037, -58.3816); // Buenos Aires como padrão
+                    }
+                });
+
+                const initMap = (lat, lng) => {
+                    map = L.map('map').setView([lat, lng], 13);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(map);
+
+                    // Adiciona o marcador central fixo
+                    centerMarker = L.marker(map.getCenter(), {
+                        icon: L.divIcon({ className: 'center-marker' }),
+                        zIndexOffset: 1000
+                    }).addTo(map);
+
+                    map.on('move', () => {
+                        centerMarker.setLatLng(map.getCenter());
+                    });
+
+                    map.on('moveend', updateCenterMarker);
+                    updateCenterMarker();
+                };
+
+                return {
+                    address,
+                    suggestions,
+                    addressSelected,
+                    showOverlay,
+                    getSuggestions,
+                    selectSuggestion
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

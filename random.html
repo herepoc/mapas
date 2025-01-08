@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sorteio de Nomes</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 50px;
+        }
+        textarea {
+            width: 300px;
+            height: 100px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        .result {
+            margin-top: 20px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <h1>Sorteio de Nomes</h1>
+    <textarea v-model="nomes" placeholder="Insira os nomes, um por linha"></textarea>
+    <br>
+    <button @click="sortearNome">Sortear Nome</button>
+    <div class="result" v-if="nomeSorteado">
+        Nome sorteado: {{ nomeSorteado }}
+    </div>
+</div>
+
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            nomes: '',
+            nomeSorteado: ''
+        },
+        methods: {
+            sortearNome() {
+                const listaNomes = this.nomes.split('\n').filter(nome => nome.trim() !== '');
+                if (listaNomes.length === 0) {
+                    alert('Por favor, insira pelo menos um nome.');
+                    return;
+                }
+                const indiceSorteado = Math.floor(Math.random() * listaNomes.length);
+                this.nomeSorteado = listaNomes[indiceSorteado];
+            }
+        }
+    });
+</script>
+
+</body>
+</html>
